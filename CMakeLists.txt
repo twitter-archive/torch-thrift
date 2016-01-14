@@ -1,0 +1,19 @@
+SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR})
+
+CMAKE_MINIMUM_REQUIRED(VERSION 2.6 FATAL_ERROR)
+CMAKE_POLICY(VERSION 2.6)
+
+FIND_PACKAGE(Torch REQUIRED)
+
+SET(CMAKE_C_FLAGS "--std=c99 -pedantic -Werror -Wall -Wextra -Wno-unused-function -D_GNU_SOURCE ${CMAKE_C_FLAGS}")
+SET(src
+   src/thrift.c
+)
+
+ADD_TORCH_PACKAGE(thrift "${src}" "" "Thrift serialization for Torch")
+
+TARGET_LINK_LIBRARIES(thrift luaT TH)
+
+SET_TARGET_PROPERTIES(thrift_static PROPERTIES COMPILE_FLAGS "-fPIC -DSTATIC_TH")
+
+INSTALL(FILES ${luasrc} DESTINATION "${Torch_INSTALL_LUA_PATH_SUBDIR}/thrift")
