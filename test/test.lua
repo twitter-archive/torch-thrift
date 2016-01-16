@@ -375,4 +375,12 @@ test {
       fail(c, "9223372036854775808")
       fail(c, "-9223372036854775809")
    end,
+
+   testI64StringsSimpleReader = function()
+      -- test a simple reader case
+      local c0 = thrift.codec({ ttype = "struct", i64string = true, fields = { "i64" } })
+      local c1 = thrift.codec({ i64string = true })
+      local s = c1:read(c0:write({ "9223372036854775807" }))
+      assert(s[1] == "9223372036854775807", 'expected a struct with a single field of 9223372036854775807')
+   end,
 }

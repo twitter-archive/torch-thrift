@@ -109,9 +109,10 @@ static int thrift_desc_rcsv(lua_State *L, int index, struct desc_t *desc) {
       lua_gettable(L, index);
       if (lua_type(L, lua_gettop(L)) == LUA_TNIL) {
          desc->ttype = TTYPE_STRUCT;
-      } else {
-         desc->ttype = thrift_ttype(L, lua_tostring(L, lua_gettop(L)));
+         lua_pop(L, 1);
+         return 0;
       }
+      desc->ttype = thrift_ttype(L, lua_tostring(L, lua_gettop(L)));
       lua_pop(L, 1);
       switch (desc->ttype) {
          case TTYPE_STRUCT:

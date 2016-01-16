@@ -110,7 +110,7 @@ struct B {
 Lua and 64 bit integers
 -----------------------
 
-Lua 5.2 and earlier uses doubles as its internal number format.
+Lua 5.1 and earlier uses doubles as its internal number format.
 That means we can not represent the full range of i64 values
 natively in the Lua VM. The default behavior is to throw an error
 when reading or writing any value that would be out of range
@@ -121,9 +121,3 @@ codec to turn i64 values into strings and vice versa on write.
 ```lua
 local codec = thrift.codec({ i64string = true })
 ```
-
-License
--------
-
-Licensed under the Apache License, Version 2.0.
-[See LICENSE file](LICENSE).
