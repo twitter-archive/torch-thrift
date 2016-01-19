@@ -22,13 +22,7 @@
 #define TTYPE_ENUM   (16)
 
 static int _lua_error(lua_State *L, int ret, const char* file, int line) {
-   int pos_ret;
-
-   if (ret < 0) {
-      pos_ret = -ret;
-   } else {
-      pos_ret = ret;
-   }
+   int pos_ret = ret < 0 ? -ret : ret;
    return luaL_error(L, "Thrift Error: (%s, %d): (%d, %s)\n", file, line, pos_ret, strerror(pos_ret));
 }
 
@@ -91,12 +85,10 @@ typedef struct desc_t {
 } desc_t;
 
 static int _compare(const void *a, const void *b) {
-   return (int)((struct desc_t *)a)->field_id - (int)((struct desc_t *)b)->field_id;
+   return (int)((desc_t *)a)->field_id - (int)((desc_t *)b)->field_id;
 }
 
-static int thrift_desc_rcsv(lua_State *L, int index, struct desc_t *desc) {
-   int fields;
-
+static int thrift_desc_rcsv(lua_State *L, int index, desc_t *desc) {
    if (lua_type(L, index) == LUA_TSTRING) {
       desc->ttype = thrift_ttype(L, lua_tostring(L, index));
       return 0;
@@ -118,29 +110,29 @@ static int thrift_desc_rcsv(lua_State *L, int index, struct desc_t *desc) {
          case TTYPE_STRUCT:
             lua_pushstring(L, "fields");
             lua_gettable(L, index);
-            fields = lua_gettop(L);
+            int fields = lua_gettop(L);
             lua_pushnil(L);
             desc->num_fields = 0;
             while (lua_next(L, fields) != 0) {
-               desc->fields = (struct desc_t *)realloc(desc->fields, (desc->num_fields + 1) * sizeof(struct desc_t));
-               memset(&desc->fields[desc->num_fields], 0, sizeof(struct desc_t));
+               desc->fields = (desc_t *)realloc(desc->fields, (desc->num_fields + 1) * sizeof(desc_t));
+               memset(&desc->fields[desc->num_fields], 0, sizeof(desc_t));
                desc->fields[desc->num_fields].field_id = lua_tointeger(L, fields + 1);
                thrift_desc_rcsv(L, fields + 2, &desc->fields[desc->num_fields]);
                lua_pop(L, 1);
                desc->num_fields++;
             }
-            qsort(desc->fields, desc->num_fields, sizeof(struct desc_t), _compare);
+            qsort(desc->fields, desc->num_fields, sizeof(desc_t), _compare);
             lua_pop(L, 1);
             return 0;
          case TTYPE_MAP:
             lua_pushstring(L, "key");
             lua_gettable(L, index);
-            desc->key_ttype = calloc(1, sizeof(struct desc_t));
+            desc->key_ttype = calloc(1, sizeof(desc_t));
             thrift_desc_rcsv(L, lua_gettop(L), desc->key_ttype);
             lua_pop(L, 1);
             lua_pushstring(L, "value");
             lua_gettable(L, index);
-            desc->value_ttype = calloc(1, sizeof(struct desc_t));
+            desc->value_ttype = calloc(1, sizeof(desc_t));
             thrift_desc_rcsv(L, lua_gettop(L), desc->value_ttype);
             lua_pop(L, 1);
             return 0;
@@ -148,7 +140,7 @@ static int thrift_desc_rcsv(lua_State *L, int index, struct desc_t *desc) {
          case TTYPE_LIST:
             lua_pushstring(L, "value");
             lua_gettable(L, index);
-            desc->value_ttype = calloc(1, sizeof(struct desc_t));
+            desc->value_ttype = calloc(1, sizeof(desc_t));
             thrift_desc_rcsv(L, lua_gettop(L), desc->value_ttype);
             lua_pop(L, 1);
             return 0;
@@ -159,10 +151,8 @@ static int thrift_desc_rcsv(lua_State *L, int index, struct desc_t *desc) {
 }
 
 static int thrift_desc(lua_State *L) {
-   struct desc_t *desc;
-
-   desc = (struct desc_t *)lua_newuserdata(L, sizeof(struct desc_t));
-   memset(desc, 0, sizeof(struct desc_t));
+   desc_t *desc = (desc_t *)lua_newuserdata(L, sizeof(desc_t));
+   memset(desc, 0, sizeof(desc_t));
    if (lua_gettop(L) > 1) {
       thrift_desc_rcsv(L, 1, desc);
    } else {
@@ -173,9 +163,7 @@ static int thrift_desc(lua_State *L) {
    return 1;
 }
 
-static void thrift_destroy_desc_rcsv(struct desc_t *desc) {
-   uint16_t i;
-
+static void thrift_destroy_desc_rcsv(desc_t *desc) {
    if (desc->key_ttype) {
       thrift_destroy_desc_rcsv(desc->key_ttype);
       free(desc->key_ttype);
@@ -184,84 +172,91 @@ static void thrift_destroy_desc_rcsv(struct desc_t *desc) {
       thrift_destroy_desc_rcsv(desc->value_ttype);
       free(desc->value_ttype);
    }
-   for (i = 0; i < desc->num_fields; i++) {
+   for (uint16_t i = 0; i < desc->num_fields; i++) {
       thrift_destroy_desc_rcsv(&desc->fields[i]);
    }
    free(desc->fields);
 }
 
 static int thrift_gc(lua_State *L) {
-   struct desc_t *desc;
-
-   desc = (struct desc_t *)lua_touserdata(L, 1);
+   desc_t *desc = (desc_t *)lua_touserdata(L, 1);
    thrift_destroy_desc_rcsv(desc);
    return 0;
 }
 
-static int thrift_read_rcsv(lua_State *L, uint8_t ttype, struct buffer_t *in, int i64_string) {
-   uint8_t i8, kt, vt;
-   int16_t i16;
-   int32_t i32, i;
-   int64_t i64;
-   double d;
-   const char *str;
-   char sz[256];
-
+static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int i64_string) {
    switch (ttype) {
       case TTYPE_STOP:
          return 0;
       case TTYPE_VOID:
          return 0;
-      case TTYPE_BOOL:
+      case TTYPE_BOOL: {
+         uint8_t i8;
          READ(L, &i8, sizeof(i8), in)
          lua_pushboolean(L, i8 != 0);
          return 1;
-      case TTYPE_BYTE:
+      }
+      case TTYPE_BYTE: {
+         uint8_t i8;
          READ(L, &i8, sizeof(i8), in)
          lua_pushinteger(L, i8);
          return 1;
-      case TTYPE_DOUBLE:
+      }
+      case TTYPE_DOUBLE: {
+         int64_t i64;
          READ(L, &i64, sizeof(i64), in)
          i64 = betoh64(i64);
+         double d;
          memcpy(&d, &i64, sizeof(i64));
          lua_pushnumber(L, d);
          return 1;
-      case TTYPE_I16:
+      }
+      case TTYPE_I16: {
+         int16_t i16;
          READ(L, &i16, sizeof(i16), in)
          i16 = betoh16(i16);
-         d = i16;
+         double d = i16;
          lua_pushnumber(L, d);
          return 1;
+      }
       case TTYPE_I32:
-      case TTYPE_ENUM:
+      case TTYPE_ENUM: {
+         int32_t i32;
          READ(L, &i32, sizeof(i32), in)
          i32 = betoh32(i32);
-         d = i32;
+         double d = i32;
          lua_pushnumber(L, d);
          return 1;
-      case TTYPE_I64:
+      }
+      case TTYPE_I64: {
+         int64_t i64;
          READ(L, &i64, sizeof(i64), in)
          i64 = betoh64(i64);
          if (i64_string) {
+            char sz[256];
             snprintf(sz, 256, "%" PRId64 "", i64);
             lua_pushstring(L, sz);
          } else {
-            d = i64;
+            double d = i64;
             if ((int64_t)d != i64) {
                return LUA_HANDLE_ERROR_STR(L, "i64 value out of range");
             }
             lua_pushnumber(L, d);
          }
          return 1;
-      case TTYPE_STRING:
+      }
+      case TTYPE_STRING: {
+         int32_t i32;
          READ(L, &i32, sizeof(i32), in)
          i32 = betoh32(i32);
-         str = (const char *)(in->data + in->cb);
+         const char *str = (const char *)(in->data + in->cb);
          READN(L, (uint32_t)i32, in)
          lua_pushlstring(L, str, i32);
          return 1;
-      case TTYPE_STRUCT:
+      }
+      case TTYPE_STRUCT: {
          lua_newtable(L);
+         uint8_t vt;
          READ(L, &vt, sizeof(vt), in)
          while (vt != TTYPE_STOP) {
             thrift_read_rcsv(L, TTYPE_I16, in, i64_string);
@@ -270,10 +265,14 @@ static int thrift_read_rcsv(lua_State *L, uint8_t ttype, struct buffer_t *in, in
             READ(L, &vt, sizeof(vt), in)
          }
          return 1;
-      case TTYPE_MAP:
+      }
+      case TTYPE_MAP: {
          lua_newtable(L);
+         uint8_t kt;
          READ(L, &kt, sizeof(kt), in)
+         uint8_t vt;
          READ(L, &vt, sizeof(vt), in)
+         int32_t i32;
          READ(L, &i32, sizeof(i32), in)
          i32 = betoh32(i32);
          while (i32 > 0) {
@@ -283,115 +282,122 @@ static int thrift_read_rcsv(lua_State *L, uint8_t ttype, struct buffer_t *in, in
             i32--;
          }
          return 1;
+      }
       case TTYPE_SET:
-      case TTYPE_LIST:
+      case TTYPE_LIST: {
          lua_newtable(L);
+         uint8_t vt;
          READ(L, &vt, sizeof(vt), in)
+         int32_t i32;
          READ(L, &i32, sizeof(i32), in)
          i32 = betoh32(i32);
-         for (i = 1; i <= i32; i++) {
+         for (int32_t i = 1; i <= i32; i++) {
             lua_pushinteger(L, i);
             thrift_read_rcsv(L, vt, in, i64_string);
             lua_settable(L, -3);
          }
          return 1;
+      }
       default:
          return LUA_HANDLE_ERROR(L, EINVAL);
    }
 }
 
 static int thrift_read(lua_State *L) {
-   struct buffer_t in;
-   struct desc_t *desc;
+   buffer_t in;
+   desc_t *desc;
 
-   desc = (struct desc_t *)lua_touserdata(L, 1);
+   desc = (desc_t *)lua_touserdata(L, 1);
    in.data = (uint8_t *)lua_tolstring(L, 2, &in.max_cb);
    in.cb = 0;
    return thrift_read_rcsv(L, desc->ttype, &in, desc->i64_string);
 }
 
-static int thrift_write_rcsv(lua_State *L, int index, struct desc_t *desc, struct buffer_t *out, int i64_string) {
-   uint8_t i8;
-   int16_t i16, j;
-   int32_t i32, i;
-   int64_t i64;
-   double d;
-   const char *str;
-   char *str_end;
-   size_t len;
-   int top;
-
+static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *out, int i64_string) {
    switch (desc->ttype) {
-      case TTYPE_BOOL:
+      case TTYPE_BOOL: {
+         uint8_t i8;
          i8 = lua_toboolean(L, index);
          WRITE(L, &i8, sizeof(i8), out)
          return 0;
-      case TTYPE_BYTE:
-         d = lua_tonumber(L, index);
-         i8 = d;
+      }
+      case TTYPE_BYTE: {
+         double d = lua_tonumber(L, index);
+         uint8_t i8 = d;
          if ((double)i8 != d) return LUA_HANDLE_ERROR_STR(L, "byte value out of range during");
          WRITE(L, &i8, sizeof(i8), out)
          return 0;
-      case TTYPE_DOUBLE:
-         d = lua_tonumber(L, index);
+      }
+      case TTYPE_DOUBLE: {
+         double d = lua_tonumber(L, index);
+         int64_t i64;
          memcpy(&i64, &d, sizeof(i64));
          i64 = htobe64(i64);
          WRITE(L, &i64, sizeof(i64), out)
          return 0;
-      case TTYPE_I16:
-         d = lua_tonumber(L, index);
-         i16 = d;
+      }
+      case TTYPE_I16: {
+         double d = lua_tonumber(L, index);
+         int16_t i16 = d;
          if ((double)i16 != d) return LUA_HANDLE_ERROR_STR(L, "i16 value out of range");
          i16 = htobe16(i16);
          WRITE(L, &i16, sizeof(i16), out)
          return 0;
+      }
       case TTYPE_I32:
-      case TTYPE_ENUM:
-         d = lua_tonumber(L, index);
-         i32 = d;
+      case TTYPE_ENUM: {
+         double d = lua_tonumber(L, index);
+         int32_t i32 = d;
          if ((double)i32 != d) return LUA_HANDLE_ERROR_STR(L, "i32 value out of range");
          i32 = htobe32(i32);
          WRITE(L, &i32, sizeof(i32), out)
          return 0;
-      case TTYPE_I64:
+      }
+      case TTYPE_I64: {
+         int64_t i64;
          if (i64_string) {
-            str = lua_tolstring(L, index, &len);
+            size_t len;
+            const char *str = lua_tolstring(L, index, &len);
             if (str == NULL || len == 0) return LUA_HANDLE_ERROR_STR(L, "i64 can not convert from empty string");
-            str_end = (char *)str + len;
+            char *str_end = (char *)str + len;
             i64 = strtoll(str, &str_end, 10);
             if (i64 == 0 && errno == EINVAL) return LUA_HANDLE_ERROR(L, errno);
             if ((i64 == LLONG_MIN || i64 == LLONG_MAX) && errno == ERANGE) return LUA_HANDLE_ERROR(L, errno);
             if (str_end != ((char *)str + len)) return LUA_HANDLE_ERROR_STR(L, "i64 did not consume the entire string");
          } else {
-            d = lua_tonumber(L, index);
+            double d = lua_tonumber(L, index);
             i64 = d;
             if ((double)i64 != d) return LUA_HANDLE_ERROR_STR(L, "i64 value out of range");
          }
          i64 = htobe64(i64);
          WRITE(L, &i64, sizeof(i64), out)
          return 0;
-      case TTYPE_STRING:
-         str = lua_tolstring(L, index, &len);
-         i32 = htobe32(len);
+      }
+      case TTYPE_STRING: {
+         size_t len;
+         const char *str = lua_tolstring(L, index, &len);
+         int32_t i32 = htobe32(len);
          WRITE(L, &i32, sizeof(i32), out)
          WRITE(L, str, len, out)
          return 0;
-      case TTYPE_STRUCT:
-         for (j = 0; j < desc->num_fields; j++) {
+      }
+      case TTYPE_STRUCT: {
+         for (int16_t j = 0; j < desc->num_fields; j++) {
             WRITE(L, &desc->fields[j].ttype, sizeof(uint8_t), out)
-            i16 = htobe16(desc->fields[j].field_id);
+            int16_t i16 = htobe16(desc->fields[j].field_id);
             WRITE(L, &i16, sizeof(i16), out)
             lua_rawgeti(L, index, desc->fields[j].field_id);
             thrift_write_rcsv(L, lua_gettop(L), &desc->fields[j], out, i64_string);
             lua_pop(L, 1);
          }
-         i8 = TTYPE_STOP;
+         uint8_t i8 = TTYPE_STOP;
          WRITE(L, &i8, sizeof(i8), out)
          return 0;
-      case TTYPE_MAP:
+      }
+      case TTYPE_MAP: {
          WRITE(L, &desc->key_ttype->ttype, sizeof(uint8_t), out)
          WRITE(L, &desc->value_ttype->ttype, sizeof(uint8_t), out)
-         i32 = 0;
+         int32_t i32 = 0;
          lua_pushnil(L);
          while (lua_next(L, index) != 0) {
             i32++;
@@ -399,7 +405,7 @@ static int thrift_write_rcsv(lua_State *L, int index, struct desc_t *desc, struc
          }
          i32 = htobe32(i32);
          WRITE(L, &i32, sizeof(i32), out)
-         top = lua_gettop(L);
+         int top = lua_gettop(L);
          lua_pushnil(L);
          while (lua_next(L, index) != 0) {
             thrift_write_rcsv(L, top + 1, desc->key_ttype, out, i64_string);
@@ -407,41 +413,41 @@ static int thrift_write_rcsv(lua_State *L, int index, struct desc_t *desc, struc
             lua_pop(L, 1);
          }
          return 0;
+      }
       case TTYPE_SET:
-      case TTYPE_LIST:
+      case TTYPE_LIST: {
          WRITE(L, &desc->value_ttype->ttype, sizeof(uint8_t), out)
-         len = lua_objlen(L, index);
-         i32 = htobe32(len);
+         size_t len = lua_objlen(L, index);
+         int32_t i32 = htobe32(len);
          WRITE(L, &i32, sizeof(i32), out)
-         top = lua_gettop(L);
-         for (i = 1; i <= (int32_t)len; i++) {
+         int top = lua_gettop(L);
+         for (int32_t i = 1; i <= (int32_t)len; i++) {
             lua_rawgeti(L, index, i);
             thrift_write_rcsv(L, top + 1, desc->value_ttype, out, i64_string);
             lua_pop(L, 1);
          }
          return 0;
+      }
    }
    return LUA_HANDLE_ERROR(L, EINVAL);
 }
 
 static int thrift_write(lua_State *L) {
-   struct desc_t *desc;
-   struct buffer_t out;
-
-   desc = (struct desc_t *)lua_touserdata(L, 1);
-   memset(&out, 0, sizeof(struct buffer_t));
+   desc_t *desc = (desc_t *)lua_touserdata(L, 1);
+   buffer_t out;
+   memset(&out, 0, sizeof(buffer_t));
    thrift_write_rcsv(L, 2, desc, &out, desc->i64_string);
    lua_pushlstring(L, (const char *)out.data, out.cb);
    free(out.data);
    return 1;
 }
 
-static const struct luaL_reg thrift_routines[] = {
+static const luaL_reg thrift_routines[] = {
    {"codec", thrift_desc},
    {NULL, NULL}
 };
 
-static const struct luaL_reg thrift_codec_routines[] = {
+static const luaL_reg thrift_codec_routines[] = {
    {"read", thrift_read},
    {"write", thrift_write},
    {"__gc", thrift_gc},
