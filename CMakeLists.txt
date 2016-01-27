@@ -5,6 +5,8 @@ CMAKE_POLICY(VERSION 2.6)
 
 FIND_PACKAGE(Torch REQUIRED)
 
+SET(BUILD_STATIC YES) # makes sure static targets are enabled in ADD_TORCH_PACKAGE
+
 SET(CMAKE_C_FLAGS "--std=c99 -pedantic -Werror -Wall -Wextra -Wno-unused-function -D_GNU_SOURCE ${CMAKE_C_FLAGS}")
 SET(src
    src/thrift.c
