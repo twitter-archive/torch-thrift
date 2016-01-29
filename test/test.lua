@@ -383,4 +383,47 @@ test {
       local s = c1:read(c0:write({ "9223372036854775807" }))
       assert(s[1] == "9223372036854775807", 'expected a struct with a single field of 9223372036854775807')
    end,
+
+   testNamedFields = function()
+      local codec = thrift.codec({
+         ttype = "struct",
+         fields = {
+            [1] = { ttype = "i32", name = "some_int" },
+            [2] = "string",
+            [3] = { ttype = "string", name = "named_string" },
+            [4] = { ttype = "set", name = "a_set", value = {
+                     ttype = "struct",
+                     fields = {
+                        [1] = { ttype = "i32", name = "inner" },
+                     },
+                  }
+               },
+            [5] = { ttype = "map", name = "a_map",
+                     key = "string",
+                     value = {
+                        ttype = "struct",
+                        fields = {
+                           [1] = { ttype = "double", name = "y" },
+                        },
+                     }
+               },
+         },
+      })
+      local a_map = { }
+      a_map["x"] = { y = 3.14 }
+      local data = {
+         some_int = 42,
+         [2] = "hello",
+         named_string = "whatup",
+         a_set = { { inner = 13 }, { inner = 27 } },
+         a_map = a_map,
+      }
+      local result = codec:read(codec:write(data))
+      assert(result.some_int == data.some_int)
+      assert(result[2] == data[2])
+      assert(result.named_string == data.named_string)
+      assert(result.a_set[1].inner == data.a_set[1].inner)
+      assert(result.a_set[2].inner == data.a_set[2].inner)
+      assert(result.a_map["x"].y == data.a_map["x"].y)
+   end,
 }

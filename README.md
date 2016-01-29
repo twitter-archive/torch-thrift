@@ -20,6 +20,24 @@ local result = codec:read(binary)
 print(result)
 ```
 
+You can also read Thrift using a schema, this allows for nicer
+naming of fields.
+
+```lua
+local thrift = require 'libthrift'
+local codec = thrift.codec({
+   ttype = "struct",
+   fields = {
+      [1] = { ttype = "i32", name = "an_int" },
+      [2] = { ttype = "bool", name = "someBoolean" },
+      [3] = { ttype = "list", value = "double", name = "vector" },
+   }
+})
+local binary = io.open('thrift_data.bin', 'r'):read('*all')
+local result = codec:read(binary)
+print(result)
+```
+
 Writing
 -------
 
@@ -41,6 +59,27 @@ local binary = codec:write({
    42,
    true,
    { 3.14, 13.13, 543.21 },
+})
+io.open('thrift_data.bin', 'w'):write(binary)
+```
+
+Just like reading, you can supply field names for
+better readability.
+
+```lua
+local thrift = require 'libthrift'
+local codec = thrift.codec({
+   ttype = "struct",
+   fields = {
+      [1] = { ttype = "i32", name = "an_int" },
+      [2] = { ttype = "bool", name = "someBoolean" },
+      [3] = { ttype = "list", value = "double", name = "vector" },
+   }
+})
+local binary = codec:write({
+   an_int = 42,
+   someBoolean = true,
+   vector = { 3.14, 13.13, 543.21 },
 })
 io.open('thrift_data.bin', 'w'):write(binary)
 ```
