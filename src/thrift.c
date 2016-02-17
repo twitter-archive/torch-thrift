@@ -475,12 +475,12 @@ static int thrift_write(lua_State *L) {
    return 1;
 }
 
-static const luaL_reg thrift_routines[] = {
+static const luaL_Reg thrift_routines[] = {
    {"codec", thrift_desc},
    {NULL, NULL}
 };
 
-static const luaL_reg thrift_codec_routines[] = {
+static const luaL_Reg thrift_codec_routines[] = {
    {"read", thrift_read},
    {"write", thrift_write},
    {"__gc", thrift_gc},
