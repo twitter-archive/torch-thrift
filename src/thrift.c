@@ -272,14 +272,16 @@ static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int i64_s
             READ(L, &fid, sizeof(fid), in)
             fid = betoh16(fid);
             desc_t *field_desc = NULL;
-            for (uint16_t i = 0; i < desc->num_fields; i++) {
-               if (desc->fields[i].field_id == fid) {
-                  field_desc = &desc->fields[i];
-                  break;
+            if (desc) {
+               for (uint16_t i = 0; i < desc->num_fields; i++) {
+                  if (desc->fields[i].field_id == fid) {
+                     field_desc = &desc->fields[i];
+                     break;
+                  }
                }
-            }
-            if (field_desc == NULL && desc->num_fields > 0) {
-               return LUA_HANDLE_ERROR_STR(L, "field id value out of range for struct");
+               if (field_desc == NULL && desc->num_fields > 0) {
+                  return LUA_HANDLE_ERROR_STR(L, "field id value out of range for struct");
+               }
             }
             if (field_desc && field_desc->field_name) {
                lua_pushstring(L, field_desc->field_name);
@@ -386,6 +388,7 @@ static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *ou
             const char *str = lua_tolstring(L, index, &len);
             if (str == NULL || len == 0) return LUA_HANDLE_ERROR_STR(L, "i64 can not convert from empty string");
             char *str_end = (char *)str + len;
+            errno = 0;  // reset errno, strtoll doesn't have a proper return code to indicate true error
             i64 = strtoll(str, &str_end, 10);
             if (i64 == 0 && errno == EINVAL) return LUA_HANDLE_ERROR(L, errno);
             if ((i64 == LLONG_MIN || i64 == LLONG_MAX) && errno == ERANGE) return LUA_HANDLE_ERROR(L, errno);
@@ -473,12 +476,12 @@ static int thrift_write(lua_State *L) {
    return 1;
 }
 
-static const luaL_reg thrift_routines[] = {
+static const luaL_Reg thrift_routines[] = {
    {"codec", thrift_desc},
    {NULL, NULL}
 };
 
-static const luaL_reg thrift_codec_routines[] = {
+static const luaL_Reg thrift_codec_routines[] = {
    {"read", thrift_read},
    {"write", thrift_write},
    {"__gc", thrift_gc},
@@ -490,7 +493,8 @@ DLL_EXPORT int luaopen_libthrift(lua_State *L) {
    lua_pushstring(L, "__index");
    lua_pushvalue(L, -2);
    lua_settable(L, -3);
-   luaL_openlib(L, NULL, thrift_codec_routines, 0);
-   luaL_openlib(L, "libthrift", thrift_routines, 0);
+   luaT_setfuncs(L, thrift_codec_routines, 0);
+   lua_newtable(L);
+   luaT_setfuncs(L, thrift_routines, 0);
    return 1;
 }
