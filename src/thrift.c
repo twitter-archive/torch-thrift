@@ -272,14 +272,16 @@ static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int i64_s
             READ(L, &fid, sizeof(fid), in)
             fid = betoh16(fid);
             desc_t *field_desc = NULL;
-            for (uint16_t i = 0; i < desc->num_fields; i++) {
-               if (desc->fields[i].field_id == fid) {
-                  field_desc = &desc->fields[i];
-                  break;
+            if (desc) {
+               for (uint16_t i = 0; i < desc->num_fields; i++) {
+                  if (desc->fields[i].field_id == fid) {
+                     field_desc = &desc->fields[i];
+                     break;
+                  }
                }
-            }
-            if (field_desc == NULL && desc->num_fields > 0) {
-               return LUA_HANDLE_ERROR_STR(L, "field id value out of range for struct");
+               if (field_desc == NULL && desc->num_fields > 0) {
+                  return LUA_HANDLE_ERROR_STR(L, "field id value out of range for struct");
+               }
             }
             if (field_desc && field_desc->field_name) {
                lua_pushstring(L, field_desc->field_name);
@@ -490,7 +492,8 @@ DLL_EXPORT int luaopen_libthrift(lua_State *L) {
    lua_pushstring(L, "__index");
    lua_pushvalue(L, -2);
    lua_settable(L, -3);
-   luaL_openlib(L, NULL, thrift_codec_routines, 0);
-   luaL_openlib(L, "libthrift", thrift_routines, 0);
+   luaT_setfuncs(L, thrift_codec_routines, 0);
+   lua_newtable(L);
+   luaT_setfuncs(L, thrift_routines, 0);
    return 1;
 }
