@@ -388,6 +388,7 @@ static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *ou
             const char *str = lua_tolstring(L, index, &len);
             if (str == NULL || len == 0) return LUA_HANDLE_ERROR_STR(L, "i64 can not convert from empty string");
             char *str_end = (char *)str + len;
+            errno = 0;  // reset errno, strtoll doesn't have a proper return code to indicate true error
             i64 = strtoll(str, &str_end, 10);
             if (i64 == 0 && errno == EINVAL) return LUA_HANDLE_ERROR(L, errno);
             if ((i64 == LLONG_MIN || i64 == LLONG_MAX) && errno == ERANGE) return LUA_HANDLE_ERROR(L, errno);
