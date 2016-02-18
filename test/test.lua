@@ -104,7 +104,11 @@ end
 
 local function pass(c, x, d)
    local y = c:read(d and fromBytes(d) or c:write(x))
-   assert(x == y, 'expected '..x..' but got '..y)
+   if torch.isTensor(x) then
+      assert(torch.all(torch.eq(x, y)), 'expected\n'..tostring(x)..'\nbut got\n'..tostring(y))
+   else
+      assert(x == y, 'expected '..x..' but got '..y)
+   end
 end
 
 local function fail(c, x, d)
@@ -425,5 +429,27 @@ test {
       assert(result.a_set[1].inner == data.a_set[1].inner)
       assert(result.a_set[2].inner == data.a_set[2].inner)
       assert(result.a_map["x"].y == data.a_map["x"].y)
+   end,
+
+   testI64Tensors = function()
+      local c = thrift.codec({ ttype = "i64", i64tensor = true })
+      pass(c, torch.LongTensor({12345}))
+      pass(c, torch.LongTensor({0}))
+      pass(c, torch.LongTensor({-42}))
+   end,
+
+   testTensors = function()
+      local outers = { "list", "set" }
+      local inners = { byte = "Byte", double = "Double", i16 = "Short", i32 = "Int", i64 = "Long" }
+      for _,outer in ipairs(outers) do
+         for inner,tt in pairs(inners) do
+            local t = torch.Tensor(math.random(1, 100)):type("torch."..tt.."Tensor")
+            for i = 1,t:size(1) do
+               t[i] = math.random(0, 1000) / 100
+            end
+            local c = thrift.codec({ ttype = outer, value = inner, tensors = true })
+            pass(c, t)
+         end
+      end
    end,
 }
