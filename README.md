@@ -155,8 +155,27 @@ natively in the Lua VM. The default behavior is to throw an error
 when reading or writing any value that would be out of range
 for either Thrift or for Lua. That works for most cases,
 however if you need the full range of i64 you can tell the
-codec to turn i64 values into strings and vice versa on write.
+codec to turn i64 values into strings or LongTensors (of size 1)
+and vice versa on write.
 
 ```lua
-local codec = thrift.codec({ i64string = true })
+local codec1 = thrift.codec({ i64string = true })  -- i64 to strings
+local codec2 = thrift.codec({ i64tensor = true })  -- i64 to LongTensors
+```
+
+Torch Tensors
+-------------
+
+Most of the time you want to map Thrift lists and sets directly
+to Torch Tensors. This can happen automatically for you by setting
+the *tensors* option to *true*. The following mapping will occur.
+
+   * list<byte> or set<byte> converts to/from torch.ByteTensor
+   * list<double> or set<double> converts to/from torch.DoubleTensor
+   * list<i16> or set<i16> converts to/from torch.ShortTensor
+   * list<i32> or set<i32> converts to/from torch.IntTensor
+   * list<i64> or set<i64> converts to/from torch.LongTensor
+
+```lua
+local codec = thrift.codec({ tensors = true })
 ```

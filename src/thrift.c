@@ -1,3 +1,4 @@
+#include <TH/TH.h>
 #include "luaT.h"
 #include "endianutils.h"
 #include <stdint.h>
@@ -74,6 +75,12 @@ typedef struct buffer_t {
    if ((b)->max_cb - (b)->cb < (dstcb)) return LUA_HANDLE_ERROR(L, ENOMEM); \
    (b)->cb += (dstcb);
 
+#define I64_AS_NUMBER            (0)
+#define I64_AS_STRING            (1)
+#define I64_AS_TENSOR            (2)
+#define I64_AS_MASK              (3)
+#define LIST_AND_SET_AS_TENSOR   (4)
+
 typedef struct desc_t {
    struct desc_t *key_ttype;
    struct desc_t *value_ttype;
@@ -81,7 +88,7 @@ typedef struct desc_t {
    uint16_t num_fields;
    uint16_t field_id;
    uint8_t ttype;
-   int i64_string;
+   int flags;
    const char *field_name;
 } desc_t;
 
@@ -96,7 +103,21 @@ static int thrift_desc_rcsv(lua_State *L, int index, desc_t *desc) {
    } else if (lua_type(L, index) == LUA_TTABLE) {
       lua_pushstring(L, "i64string");
       lua_gettable(L, index);
-      desc->i64_string = lua_toboolean(L, lua_gettop(L));
+      if (lua_toboolean(L, lua_gettop(L))) {
+         desc->flags |= I64_AS_STRING;
+      }
+      lua_pop(L, 1);
+      lua_pushstring(L, "i64tensor");
+      lua_gettable(L, index);
+      if (lua_toboolean(L, lua_gettop(L))) {
+         desc->flags |= I64_AS_TENSOR;
+      }
+      lua_pop(L, 1);
+      lua_pushstring(L, "tensors");
+      lua_gettable(L, index);
+      if (lua_toboolean(L, lua_gettop(L))) {
+         desc->flags |= LIST_AND_SET_AS_TENSOR;
+      }
       lua_pop(L, 1);
       lua_pushstring(L, "ttype");
       lua_gettable(L, index);
@@ -193,7 +214,7 @@ static int thrift_gc(lua_State *L) {
    return 0;
 }
 
-static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int i64_string, desc_t *desc) {
+static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int flags, desc_t *desc, void *out) {
    switch (ttype) {
       case TTYPE_STOP:
          return 0;
@@ -208,51 +229,91 @@ static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int i64_s
       case TTYPE_BYTE: {
          uint8_t i8;
          READ(L, &i8, sizeof(i8), in)
-         lua_pushinteger(L, i8);
-         return 1;
+         if (out) {
+            memcpy(out, &i8, sizeof(i8));
+            return 0;
+         } else {
+            lua_pushinteger(L, i8);
+            return 1;
+         }
       }
       case TTYPE_DOUBLE: {
          int64_t i64;
          READ(L, &i64, sizeof(i64), in)
          i64 = betoh64(i64);
-         double d;
-         memcpy(&d, &i64, sizeof(i64));
-         lua_pushnumber(L, d);
-         return 1;
+         if (out) {
+            memcpy(out, &i64, sizeof(i64));
+            return 0;
+         } else {
+            double d;
+            memcpy(&d, &i64, sizeof(i64));
+            lua_pushnumber(L, d);
+            return 1;
+         }
       }
       case TTYPE_I16: {
          int16_t i16;
          READ(L, &i16, sizeof(i16), in)
          i16 = betoh16(i16);
-         double d = i16;
-         lua_pushnumber(L, d);
-         return 1;
+         if (out) {
+            memcpy(out, &i16, sizeof(i16));
+            return 0;
+         } else {
+            double d = i16;
+            lua_pushnumber(L, d);
+            return 1;
+         }
       }
       case TTYPE_I32:
       case TTYPE_ENUM: {
          int32_t i32;
          READ(L, &i32, sizeof(i32), in)
          i32 = betoh32(i32);
-         double d = i32;
-         lua_pushnumber(L, d);
-         return 1;
+         if (out) {
+            memcpy(out, &i32, sizeof(i32));
+            return 0;
+         } else {
+            double d = i32;
+            lua_pushnumber(L, d);
+            return 1;
+         }
       }
       case TTYPE_I64: {
          int64_t i64;
          READ(L, &i64, sizeof(i64), in)
          i64 = betoh64(i64);
-         if (i64_string) {
-            char sz[256];
-            snprintf(sz, 256, "%" PRId64 "", i64);
-            lua_pushstring(L, sz);
-         } else {
-            double d = i64;
-            if ((int64_t)d != i64) {
-               return LUA_HANDLE_ERROR_STR(L, "i64 value out of range");
-            }
-            lua_pushnumber(L, d);
+         if (out) {
+            memcpy(out, &i64, sizeof(i64));
+            return 0;
          }
-         return 1;
+         switch (flags & I64_AS_MASK) {
+            case I64_AS_NUMBER: {
+               double d = i64;
+               if ((int64_t)d != i64) {
+                  return LUA_HANDLE_ERROR_STR(L, "i64 value out of range");
+               }
+               lua_pushnumber(L, d);
+               return 1;
+            }
+            case I64_AS_STRING: {
+               char sz[256];
+               snprintf(sz, 256, "%" PRId64 "", i64);
+               lua_pushstring(L, sz);
+               return 1;
+            }
+            case I64_AS_TENSOR: {
+               THLongStorage *values = THLongStorage_newWithSize(1);
+               values->data[0] = i64;
+               THLongStorage *size = THLongStorage_newWithSize(1);
+               size->data[0] = values->size;
+               THLongTensor *tensor = THLongTensor_newWithStorage(values, 0, size, NULL);
+               THLongStorage_free(size);
+               luaT_pushudata(L, tensor, "torch.LongTensor");
+               return 1;
+            }
+            default:
+               return LUA_HANDLE_ERROR_STR(L, "unknown flags value");
+         }
       }
       case TTYPE_STRING: {
          int32_t i32;
@@ -288,7 +349,7 @@ static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int i64_s
             } else {
                lua_pushinteger(L, fid);
             }
-            thrift_read_rcsv(L, vt, in, i64_string, field_desc);
+            thrift_read_rcsv(L, vt, in, flags, field_desc, NULL);
             lua_settable(L, -3);
             READ(L, &vt, sizeof(vt), in)
          }
@@ -304,8 +365,8 @@ static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int i64_s
          READ(L, &i32, sizeof(i32), in)
          i32 = betoh32(i32);
          while (i32 > 0) {
-            thrift_read_rcsv(L, kt, in, i64_string, desc ? desc->key_ttype : NULL);
-            thrift_read_rcsv(L, vt, in, i64_string, desc ? desc->value_ttype : NULL);
+            thrift_read_rcsv(L, kt, in, flags, desc ? desc->key_ttype : NULL, NULL);
+            thrift_read_rcsv(L, vt, in, flags, desc ? desc->value_ttype : NULL, NULL);
             lua_settable(L, -3);
             i32--;
          }
@@ -313,15 +374,74 @@ static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int i64_s
       }
       case TTYPE_SET:
       case TTYPE_LIST: {
-         lua_newtable(L);
          uint8_t vt;
          READ(L, &vt, sizeof(vt), in)
          int32_t i32;
          READ(L, &i32, sizeof(i32), in)
          i32 = betoh32(i32);
+         if (flags & LIST_AND_SET_AS_TENSOR) {
+            switch (vt) {
+               case TTYPE_BYTE: {
+                  THByteStorage *values = THByteStorage_newWithSize(i32);
+                  for (int32_t i = 0; i < i32; i++) {
+                     thrift_read_rcsv(L, vt, in, flags, desc ? desc->value_ttype : NULL, &values->data[i]);
+                  }
+                  THLongStorage *size = THLongStorage_newWithSize(1);
+                  size->data[0] = values->size;
+                  luaT_pushudata(L, THByteTensor_newWithStorage(values, 0, size, NULL), "torch.ByteTensor");
+                  THLongStorage_free(size);
+                  return 1;
+               }
+               case TTYPE_DOUBLE: {
+                  THDoubleStorage *values = THDoubleStorage_newWithSize(i32);
+                  for (int32_t i = 0; i < i32; i++) {
+                     thrift_read_rcsv(L, vt, in, flags, desc ? desc->value_ttype : NULL, &values->data[i]);
+                  }
+                  THLongStorage *size = THLongStorage_newWithSize(1);
+                  size->data[0] = values->size;
+                  luaT_pushudata(L, THDoubleTensor_newWithStorage(values, 0, size, NULL), "torch.DoubleTensor");
+                  THLongStorage_free(size);
+                  return 1;
+               }
+               case TTYPE_I16: {
+                  THShortStorage *values = THShortStorage_newWithSize(i32);
+                  for (int32_t i = 0; i < i32; i++) {
+                     thrift_read_rcsv(L, vt, in, flags, desc ? desc->value_ttype : NULL, &values->data[i]);
+                  }
+                  THLongStorage *size = THLongStorage_newWithSize(1);
+                  size->data[0] = values->size;
+                  luaT_pushudata(L, THShortTensor_newWithStorage(values, 0, size, NULL), "torch.ShortTensor");
+                  THLongStorage_free(size);
+                  return 1;
+               }
+               case TTYPE_I32: {
+                  THIntStorage *values = THIntStorage_newWithSize(i32);
+                  for (int32_t i = 0; i < i32; i++) {
+                     thrift_read_rcsv(L, vt, in, flags, desc ? desc->value_ttype : NULL, &values->data[i]);
+                  }
+                  THLongStorage *size = THLongStorage_newWithSize(1);
+                  size->data[0] = values->size;
+                  luaT_pushudata(L, THIntTensor_newWithStorage(values, 0, size, NULL), "torch.IntTensor");
+                  THLongStorage_free(size);
+                  return 1;
+               }
+               case TTYPE_I64: {
+                  THLongStorage *values = THLongStorage_newWithSize(i32);
+                  for (int32_t i = 0; i < i32; i++) {
+                     thrift_read_rcsv(L, vt, in, flags, desc ? desc->value_ttype : NULL, &values->data[i]);
+                  }
+                  THLongStorage *size = THLongStorage_newWithSize(1);
+                  size->data[0] = values->size;
+                  luaT_pushudata(L, THLongTensor_newWithStorage(values, 0, size, NULL), "torch.LongTensor");
+                  THLongStorage_free(size);
+                  return 1;
+               }
+            }
+         }
+         lua_newtable(L);
          for (int32_t i = 1; i <= i32; i++) {
             lua_pushinteger(L, i);
-            thrift_read_rcsv(L, vt, in, i64_string, desc ? desc->value_ttype : NULL);
+            thrift_read_rcsv(L, vt, in, flags, desc ? desc->value_ttype : NULL, NULL);
             lua_settable(L, -3);
          }
          return 1;
@@ -338,10 +458,10 @@ static int thrift_read(lua_State *L) {
    desc = (desc_t *)lua_touserdata(L, 1);
    in.data = (uint8_t *)lua_tolstring(L, 2, &in.max_cb);
    in.cb = 0;
-   return thrift_read_rcsv(L, desc->ttype, &in, desc->i64_string, desc);
+   return thrift_read_rcsv(L, desc->ttype, &in, desc->flags, desc, NULL);
 }
 
-static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *out, int i64_string) {
+static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *out, int flags, void *in) {
    switch (desc->ttype) {
       case TTYPE_BOOL: {
          uint8_t i8;
@@ -350,53 +470,88 @@ static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *ou
          return 0;
       }
       case TTYPE_BYTE: {
-         double d = lua_tonumber(L, index);
-         uint8_t i8 = d;
-         if ((double)i8 != d) return LUA_HANDLE_ERROR_STR(L, "byte value out of range during");
+         uint8_t i8;
+         if (in) {
+            memcpy(&i8, in, sizeof(i8));
+         } else {
+            double d = lua_tonumber(L, index);
+            i8 = d;
+            if ((double)i8 != d) return LUA_HANDLE_ERROR_STR(L, "byte value out of range");
+         }
          WRITE(L, &i8, sizeof(i8), out)
          return 0;
       }
       case TTYPE_DOUBLE: {
-         double d = lua_tonumber(L, index);
          int64_t i64;
-         memcpy(&i64, &d, sizeof(i64));
+         if (in) {
+            memcpy(&i64, in, sizeof(i64));
+         } else {
+            double d = lua_tonumber(L, index);
+            memcpy(&i64, &d, sizeof(i64));
+         }
          i64 = htobe64(i64);
          WRITE(L, &i64, sizeof(i64), out)
          return 0;
       }
       case TTYPE_I16: {
-         double d = lua_tonumber(L, index);
-         int16_t i16 = d;
-         if ((double)i16 != d) return LUA_HANDLE_ERROR_STR(L, "i16 value out of range");
+         int16_t i16;
+         if (in) {
+            memcpy(&i16, in, sizeof(i16));
+         } else {
+            double d = lua_tonumber(L, index);
+            i16 = d;
+            if ((double)i16 != d) return LUA_HANDLE_ERROR_STR(L, "i16 value out of range");
+         }
          i16 = htobe16(i16);
          WRITE(L, &i16, sizeof(i16), out)
          return 0;
       }
       case TTYPE_I32:
       case TTYPE_ENUM: {
-         double d = lua_tonumber(L, index);
-         int32_t i32 = d;
-         if ((double)i32 != d) return LUA_HANDLE_ERROR_STR(L, "i32 value out of range");
+         int32_t i32;
+         if (in) {
+            memcpy(&i32, in, sizeof(i32));
+         } else {
+            double d = lua_tonumber(L, index);
+            i32 = d;
+            if ((double)i32 != d) return LUA_HANDLE_ERROR_STR(L, "i32 value out of range");
+         }
          i32 = htobe32(i32);
          WRITE(L, &i32, sizeof(i32), out)
          return 0;
       }
       case TTYPE_I64: {
          int64_t i64;
-         if (i64_string) {
-            size_t len;
-            const char *str = lua_tolstring(L, index, &len);
-            if (str == NULL || len == 0) return LUA_HANDLE_ERROR_STR(L, "i64 can not convert from empty string");
-            char *str_end = (char *)str + len;
-            errno = 0;  // reset errno, strtoll doesn't have a proper return code to indicate true error
-            i64 = strtoll(str, &str_end, 10);
-            if (i64 == 0 && errno == EINVAL) return LUA_HANDLE_ERROR(L, errno);
-            if ((i64 == LLONG_MIN || i64 == LLONG_MAX) && errno == ERANGE) return LUA_HANDLE_ERROR(L, errno);
-            if (str_end != ((char *)str + len)) return LUA_HANDLE_ERROR_STR(L, "i64 did not consume the entire string");
+         if (in) {
+            memcpy(&i64, in, sizeof(i64));
          } else {
-            double d = lua_tonumber(L, index);
-            i64 = d;
-            if ((double)i64 != d) return LUA_HANDLE_ERROR_STR(L, "i64 value out of range");
+            switch (flags & I64_AS_MASK) {
+               case I64_AS_NUMBER: {
+                  double d = lua_tonumber(L, index);
+                  i64 = d;
+                  if ((double)i64 != d) return LUA_HANDLE_ERROR_STR(L, "i64 value out of range");
+                  break;
+               }
+               case I64_AS_STRING: {
+                  size_t len;
+                  const char *str = lua_tolstring(L, index, &len);
+                  if (str == NULL || len == 0) return LUA_HANDLE_ERROR_STR(L, "i64 can not convert from empty string");
+                  char *str_end = (char *)str + len;
+                  errno = 0;  // reset errno, strtoll doesn't have a proper return code to indicate true error
+                  i64 = strtoll(str, &str_end, 10);
+                  if (i64 == 0 && errno == EINVAL) return LUA_HANDLE_ERROR(L, errno);
+                  if ((i64 == LLONG_MIN || i64 == LLONG_MAX) && errno == ERANGE) return LUA_HANDLE_ERROR(L, errno);
+                  if (str_end != ((char *)str + len)) return LUA_HANDLE_ERROR_STR(L, "i64 did not consume the entire string");
+                  break;
+               }
+               case I64_AS_TENSOR: {
+                  THLongTensor *values = luaT_toudata(L, index, "torch.LongTensor");
+                  i64 = values->storage->data[values->storageOffset];
+                  break;
+               }
+               default:
+                  return LUA_HANDLE_ERROR_STR(L, "unknown flags value");
+            }
          }
          i64 = htobe64(i64);
          WRITE(L, &i64, sizeof(i64), out)
@@ -421,7 +576,7 @@ static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *ou
                lua_pushinteger(L, desc->fields[j].field_id);
             }
             lua_rawget(L, index);
-            thrift_write_rcsv(L, lua_gettop(L), &desc->fields[j], out, i64_string);
+            thrift_write_rcsv(L, lua_gettop(L), &desc->fields[j], out, flags, NULL);
             lua_pop(L, 1);
          }
          uint8_t i8 = TTYPE_STOP;
@@ -442,8 +597,8 @@ static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *ou
          int top = lua_gettop(L);
          lua_pushnil(L);
          while (lua_next(L, index) != 0) {
-            thrift_write_rcsv(L, top + 1, desc->key_ttype, out, i64_string);
-            thrift_write_rcsv(L, top + 2, desc->value_ttype, out, i64_string);
+            thrift_write_rcsv(L, top + 1, desc->key_ttype, out, flags, NULL);
+            thrift_write_rcsv(L, top + 2, desc->value_ttype, out, flags, NULL);
             lua_pop(L, 1);
          }
          return 0;
@@ -451,13 +606,72 @@ static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *ou
       case TTYPE_SET:
       case TTYPE_LIST: {
          WRITE(L, &desc->value_ttype->ttype, sizeof(uint8_t), out)
+         if (flags & LIST_AND_SET_AS_TENSOR) {
+            switch (desc->value_ttype->ttype) {
+               case TTYPE_BYTE: {
+                  THByteTensor *values = luaT_toudata(L, index, "torch.ByteTensor");
+                  if (values->nDimension != 1) return LUA_HANDLE_ERROR_STR(L, "expected a 1 dimensional tensor");
+                  int32_t len = values->size[0];
+                  int32_t i32 = htobe32(len);
+                  WRITE(L, &i32, sizeof(i32), out)
+                  for (int32_t i = 0; i < len; i++) {
+                     thrift_write_rcsv(L, -1, desc->value_ttype, out, flags, values->storage->data + values->storageOffset + i);
+                  }
+                  return 0;
+               }
+               case TTYPE_DOUBLE: {
+                  THDoubleTensor *values = luaT_toudata(L, index, "torch.DoubleTensor");
+                  if (values->nDimension != 1) return LUA_HANDLE_ERROR_STR(L, "expected a 1 dimensional tensor");
+                  int32_t len = values->size[0];
+                  int32_t i32 = htobe32(len);
+                  WRITE(L, &i32, sizeof(i32), out)
+                  for (int32_t i = 0; i < len; i++) {
+                     thrift_write_rcsv(L, -1, desc->value_ttype, out, flags, values->storage->data + values->storageOffset + i);
+                  }
+                  return 0;
+               }
+               case TTYPE_I16: {
+                  THShortTensor *values = luaT_toudata(L, index, "torch.ShortTensor");
+                  if (values->nDimension != 1) return LUA_HANDLE_ERROR_STR(L, "expected a 1 dimensional tensor");
+                  int32_t len = values->size[0];
+                  int32_t i32 = htobe32(len);
+                  WRITE(L, &i32, sizeof(i32), out)
+                  for (int32_t i = 0; i < len; i++) {
+                     thrift_write_rcsv(L, -1, desc->value_ttype, out, flags, values->storage->data + values->storageOffset + i);
+                  }
+                  return 0;
+               }
+               case TTYPE_I32: {
+                  THIntTensor *values = luaT_toudata(L, index, "torch.IntTensor");
+                  if (values->nDimension != 1) return LUA_HANDLE_ERROR_STR(L, "expected a 1 dimensional tensor");
+                  int32_t len = values->size[0];
+                  int32_t i32 = htobe32(len);
+                  WRITE(L, &i32, sizeof(i32), out)
+                  for (int32_t i = 0; i < len; i++) {
+                     thrift_write_rcsv(L, -1, desc->value_ttype, out, flags, values->storage->data + values->storageOffset + i);
+                  }
+                  return 0;
+               }
+               case TTYPE_I64: {
+                  THLongTensor *values = luaT_toudata(L, index, "torch.LongTensor");
+                  if (values->nDimension != 1) return LUA_HANDLE_ERROR_STR(L, "expected a 1 dimensional tensor");
+                  int32_t len = values->size[0];
+                  int32_t i32 = htobe32(len);
+                  WRITE(L, &i32, sizeof(i32), out)
+                  for (int32_t i = 0; i < len; i++) {
+                     thrift_write_rcsv(L, -1, desc->value_ttype, out, flags, values->storage->data + values->storageOffset + i);
+                  }
+                  return 0;
+               }
+            }
+         }
          size_t len = lua_objlen(L, index);
          int32_t i32 = htobe32(len);
          WRITE(L, &i32, sizeof(i32), out)
          int top = lua_gettop(L);
          for (int32_t i = 1; i <= (int32_t)len; i++) {
             lua_rawgeti(L, index, i);
-            thrift_write_rcsv(L, top + 1, desc->value_ttype, out, i64_string);
+            thrift_write_rcsv(L, top + 1, desc->value_ttype, out, flags, NULL);
             lua_pop(L, 1);
          }
          return 0;
@@ -470,7 +684,7 @@ static int thrift_write(lua_State *L) {
    desc_t *desc = (desc_t *)lua_touserdata(L, 1);
    buffer_t out;
    memset(&out, 0, sizeof(buffer_t));
-   thrift_write_rcsv(L, 2, desc, &out, desc->i64_string);
+   thrift_write_rcsv(L, 2, desc, &out, desc->flags, NULL);
    lua_pushlstring(L, (const char *)out.data, out.cb);
    free(out.data);
    return 1;
