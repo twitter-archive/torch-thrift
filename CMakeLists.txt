@@ -12,7 +12,11 @@ SET(src
    src/thrift.c
 )
 
-ADD_TORCH_PACKAGE(thrift "${src}" "" "Thrift serialization for Torch")
+SET(luasrc
+   test/test.lua
+)
+
+ADD_TORCH_PACKAGE(thrift "${src}" "${luasrc}" "Thrift serialization for Torch")
 
 TARGET_LINK_LIBRARIES(thrift luaT TH)
 
