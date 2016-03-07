@@ -452,11 +452,19 @@ static int thrift_read_rcsv(lua_State *L, uint8_t ttype, buffer_t *in, int flags
 }
 
 static int thrift_read(lua_State *L) {
+   desc_t *desc = (desc_t *)lua_touserdata(L, 1);
    buffer_t in;
-   desc_t *desc;
-
-   desc = (desc_t *)lua_touserdata(L, 1);
    in.data = (uint8_t *)lua_tolstring(L, 2, &in.max_cb);
+   in.cb = 0;
+   return thrift_read_rcsv(L, desc->ttype, &in, desc->flags, desc, NULL);
+}
+
+static int thrift_read_tensor(lua_State *L) {
+   desc_t *desc = (desc_t *)lua_touserdata(L, 1);
+   THByteTensor *tensor = luaT_toudata(L, 2, "torch.ByteTensor");
+   buffer_t in;
+   in.data = (uint8_t *)(tensor->storage->data + tensor->storageOffset);
+   in.max_cb = tensor->size[0];
    in.cb = 0;
    return thrift_read_rcsv(L, desc->ttype, &in, desc->flags, desc, NULL);
 }
@@ -690,6 +698,22 @@ static int thrift_write(lua_State *L) {
    return 1;
 }
 
+static int thrift_write_tensor(lua_State *L) {
+   desc_t *desc = (desc_t *)lua_touserdata(L, 1);
+   buffer_t out;
+   memset(&out, 0, sizeof(buffer_t));
+   thrift_write_rcsv(L, 2, desc, &out, desc->flags, NULL);
+   THByteStorage* storage = THByteStorage_newWithSize(out.cb);
+   memcpy(storage->data, out.data, out.cb);
+   free(out.data);
+   THLongStorage *size = THLongStorage_newWithSize(1);
+   size->data[0] = storage->size;
+   THByteTensor *tensor = THByteTensor_newWithStorage(storage, 0, size, NULL);
+   THLongStorage_free(size);
+   luaT_pushudata(L, tensor, "torch.ByteTensor");
+   return 1;
+}
+
 static const luaL_Reg thrift_routines[] = {
    {"codec", thrift_desc},
    {NULL, NULL}
@@ -697,7 +721,9 @@ static const luaL_Reg thrift_routines[] = {
 
 static const luaL_Reg thrift_codec_routines[] = {
    {"read", thrift_read},
+   {"readTensor", thrift_read_tensor},
    {"write", thrift_write},
+   {"writeTensor", thrift_write_tensor},
    {"__gc", thrift_gc},
    {NULL, NULL}
 };

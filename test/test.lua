@@ -452,4 +452,13 @@ test {
          end
       end
    end,
+
+   testReadWriteTensors = function()
+      local codec = thrift.codec({ ttype = 'struct', fields = { 'i32', 'string' } })
+      local bytes = codec:writeTensor({ 13, 'hello' })
+      assert(bytes:size(1) == 20, bytes:size(1))
+      local result = codec:readTensor(bytes)
+      assert(result[1] == 13)
+      assert(result[2] == 'hello')
+   end,
 }

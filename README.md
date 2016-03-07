@@ -38,6 +38,9 @@ local result = codec:read(binary)
 print(result)
 ```
 
+It is possible to read directly from a ByteTensor instead of
+a string using the readTensor function.
+
 Writing
 -------
 
@@ -83,6 +86,9 @@ local binary = codec:write({
 })
 io.open('thrift_data.bin', 'w'):write(binary)
 ```
+
+It is possible to write directly to a ByteTensor instead of
+a string using the writeTensor function.
 
 Codec
 -----
