@@ -575,16 +575,18 @@ static int thrift_write_rcsv(lua_State *L, int index, desc_t *desc, buffer_t *ou
       }
       case TTYPE_STRUCT: {
          for (int16_t j = 0; j < desc->num_fields; j++) {
-            WRITE(L, &desc->fields[j].ttype, sizeof(uint8_t), out)
-            int16_t i16 = htobe16(desc->fields[j].field_id);
-            WRITE(L, &i16, sizeof(i16), out)
             if (desc->fields[j].field_name) {
                lua_pushstring(L, desc->fields[j].field_name);
             } else {
                lua_pushinteger(L, desc->fields[j].field_id);
             }
             lua_rawget(L, index);
-            thrift_write_rcsv(L, lua_gettop(L), &desc->fields[j], out, flags, NULL);
+            if (lua_type(L, -1) != LUA_TNIL) {
+               WRITE(L, &desc->fields[j].ttype, sizeof(uint8_t), out)
+               int16_t i16 = htobe16(desc->fields[j].field_id);
+               WRITE(L, &i16, sizeof(i16), out)
+               thrift_write_rcsv(L, lua_gettop(L), &desc->fields[j], out, flags, NULL);
+            }
             lua_pop(L, 1);
          }
          uint8_t i8 = TTYPE_STOP;

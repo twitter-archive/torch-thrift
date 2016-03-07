@@ -461,4 +461,44 @@ test {
       assert(result[1] == 13)
       assert(result[2] == 'hello')
    end,
+
+   testUnions = function()
+      local Tweet = {
+         name = "tweet",
+         ttype = "struct",
+         fields = {
+            [1] = { ttype = "string", name = "text" },
+            [2] = { ttype = "list", value = "string", name = "penguinTokens" },
+         },
+      }
+      local Image = {
+         name = "image",
+         ttype = "struct",
+         fields = {
+            [1] = 'string'
+         },
+      }
+      local Video = {
+         name = "video",
+         ttype = "struct",
+         fields = {
+            [1] = 'string'
+         },
+      }
+      local Request = {
+         ttype = "struct",
+         fields = {
+            [1] = Tweet,
+            [2] = Image,
+            [3] = Video
+         }
+      }
+      local thrift = require 'libthrift'
+      local codec = thrift.codec(Request)
+      codec:write({ })
+      codec:write({ image = { 'jpeg' } })
+      codec:write({ video = { 'mp4' }, image = { 'jpeg' } })
+      codec:write({ video = { 'mp4' } })
+      codec:write({ tweet = { text = 'tweet', penguinTokens = { "a", "b" } } })
+   end,
 }
